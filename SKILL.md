@@ -24,6 +24,7 @@ Verse is a **functional-logic** language with OOP, used for Unreal Editor for Fo
 | `if`/comparisons produce booleans | **No booleans as control.** Expressions **succeed (produce a value) or fail**. `x > 0` returns `x` on success or *fails*. `(1 < 2) = 1`. |
 | Exceptions / `Result<T,E>` for errors | **Failure is control flow.** `<decides>` functions succeed-or-fail; mutations roll back on failure (STM). |
 | `int / int → int` | **`int / int → rational`** (and `/` is `<decides>`). Get back to `int` with `Floor(R)` — **parens**, because `Floor` is total on `rational`. |
+| `x / 2.0`, `n + 0.5` mix freely | **Arithmetic is same-type-only.** No `(int, float)` overloads exist and no implicit promotion — `Count / 10.0` is a compile error. Promote first: `(1.0 * Count) / 10.0`. |
 | `arr[i]` just indexes | `Arr[I]` is **failable** (`<decides>`); needs a failure context. Tuples use `T(0)` (parens, never fails). |
 | `f(x)` always | `()` = compiler must *prove* arg in domain (total); `[]` = domain test is *decidable* (failable). **Call `<decides>` functions with `[]`.** |
 | Mutable by default | Immutable by default. `var` to declare mutable, `set` to mutate. Reading a `var` returns an immutable snapshot. |
@@ -63,6 +64,8 @@ These run as `<no_rollback>`, so **failure does not roll back** and you generall
 - **`spawn{...}` and `branch{...}` bodies.**
 
 Practical consequence (seen in real code): a method that signals an event **cannot be `<decides>`** — return a `logic` instead. Example: `TrySpend(Amount:float):logic` (not `<decides>`) because it calls `Recompute()` which fires a change event.
+
+**Mirror rule:** `if` conditions and `for` domains are rollback contexts, so a no_rollback function **cannot even be called there** — `if (Wallet.Add(N)?)` is error 3512; hoist (`Added := Wallet.Add(N)` … `if (not Added?)`). Any helper a `for` iterates (`for (X : Helper())`) needs `<transacts>`/`<reads>`.
 
 ## Failure & the `[]` vs `()` rule (quick)
 

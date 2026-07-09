@@ -59,6 +59,8 @@ subscription_task<public>(t:type) := class<internal>:
 
 Expose component events as `subscribable_event(payload)` fields and `.Signal(...)` them (remember: signalling is `<no_rollback>`).
 
+**`subscription_task` cannot implement the engine `cancelable` interface.** `cancelable.Cancel()` is declared `<transacts>`, and this `Cancel` signals an event (no_rollback) — an override may reduce effects, never add no_rollback, so conformance is impossible. Store these concretely (`var Subs:[]subscription_task(payload)`); reserve `[]cancelable`/`?cancelable` for engine `listenable.Subscribe` results, which really are `cancelable`.
+
 ## 3. Tag-based manager/singleton lookup
 
 Give a manager entity a tag; find it from anywhere via the simulation root:

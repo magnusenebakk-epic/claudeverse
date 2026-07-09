@@ -48,7 +48,19 @@ SkipWS()<transacts>:void = loop { ... }
 Parse()<decides><transacts>:int = SkipWS(); ...
 ```
 
-Pick the heap partner by what the body does: pure → `<computes>`; reads state → `<reads>` (or `<transacts>`); mutates → `<transacts>`.
+**Pick the heap partner by what the body actually touches.** There are *five* heap specifiers, not two. They map to the four fundamental heap effects (`reads`, `writes`, `allocates`) plus the two exclusive bundles at the ends of the lattice:
+
+| Body does… | Specifier | Implies (effect set) |
+|---|---|---|
+| nothing to the heap — pure, deterministic | `<computes>` | `{}` (empty) |
+| only *reads* mutable state (vars, mutable fields) | `<reads>` | `{reads}` |
+| *writes* existing mutable state via `set` | `<writes>` | `{writes}` — needs `<reads>` too if it also reads |
+| *allocates* observably-unique mutable memory | `<allocates>` | `{allocates}` |
+| any mix of read + write + allocate (the catch-all) | `<transacts>` | `{reads, writes, allocates}`, rollback-capable |
+
+`<computes>` and `<transacts>` are the two *exclusive* endpoints (you can't combine either with another heap specifier). `<reads>`, `<writes>`, `<allocates>` are the granular middle — `<transacts>` is simply all three at once. Lattice: `<computes>` <: `<reads>` <: `<transacts>`, with `<writes>`/`<allocates>` sitting between `<reads>` and `<transacts>`.
+
+Practically: reach for `<computes>` when pure and `<transacts>` when you mutate or when in doubt (it subsumes everything). Use `<reads>` for read-only helpers, and the granular `<writes>`/`<allocates>` only when you deliberately want to restrict a signature to exactly one sub-effect.
 
 *(This is a temporary state of the toolchain; the default will become `<transacts>` later. Until then, write the heap effect explicitly — every time.)*
 
@@ -61,6 +73,12 @@ These execute as `<no_rollback>`. Failure inside them does **not** roll back, an
 - **Scene Graph lifecycle:** `OnAddedToScene`, `OnBeginSimulation`, `OnSimulate`, `OnEndSimulation`, `OnRemovingFromScene`, `OnReceive` (scene events).
 - **Event signalling:** `Event.Signal(...)`, `subscribable_event.Signal(...)`, `listenable` signal paths.
 - **`spawn{...}` and `branch{...}`** bodies.
+
+**The mirror rule — `if`/`for` interiors ARE rollback contexts.** An `if` condition, a `for` domain (sources + filters), and every expression evaluated between them run transactionally. Consequences:
+
+- **A no_rollback function may not be CALLED there** — even total, even when you only test its `logic` result. `if (Wallet.Add(...)?)` and `if (B.Claim(P)?)` are compile errors when `Add`/`Claim` signal events (3512). **Hoist the call out, then test:** `Added := Wallet.Add(...)` then `if (not Added?)`.
+- **Every helper a `for`/`if` iterates or filters over needs a heap effect.** `for (O : Ownables())` fails to compile when `Ownables()` is a plain (no_rollback) function — annotate it `<transacts>`/`<reads>` like anything else called from a rollback context.
+- Signal-free transactional variants are the fix on the callee side: pair `TrySpend(...):logic` (signals) with `Spend(...)<transacts><decides>` (mutation only) + a post-commit `NotifySpent(...)` for the event, so transactional call sites (multi-cost commits) can compose the mutation and fire events after the transaction.
 
 **Real consequence:** a method that signals an event **must not be `<decides>`** — return a `logic`:
 
@@ -133,7 +151,7 @@ not Map[K]                      # succeeds iff K absent
 
 **Anti-patterns:** no `return` inside a `for`/`if` body in a failure context (the body *is* the value — use `first` or collect+index). Don't redundantly guard before an implicitly-failable op.
 
-**Error vs failure:** `<decides>` = expected, recoverable, rolled back. `Err(Message:string)` = unrecoverable programmer error, aborts, not rolled back, yields `:false`.
+**Error vs failure:** `<decides>` = expected, recoverable, rolled back. `Err(Message:string)` = unrecoverable programmer error, aborts, not rolled back, yields `:false`. Litmus: **can the condition arise from correct code through the public API?** Bad index / missing key / can't afford = facts about the data → `<decides>`. Broken internal invariant (a state only a bug can produce, e.g. a container's encapsulated links corrupted) → `Err` — a `<decides>` there would be swallowed by `or Default` at call sites, disguising corruption as ordinary domain absence, and rollback can't repair corrupted state anyway. "Propagate failure as far as possible" applies to the first category only.
 
 **Typed errors with `result`:** model recoverable, *inspectable* failures with `result(success_type, error_type)` (`MakeSuccess(...)`, `MakeError(...)`, `.GetSuccess[]`, `.GetError[]`). Common for `TryFire`/`Craft`/inventory ops:
 
